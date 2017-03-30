@@ -16,6 +16,7 @@
 #			   estimated density values for each cell type; consequently, the y-axis scale 
 #              can vary by cell type. Otherwise, all the panel will use the same y-axis 
 #              scale specified by c(min,max).
+#
 # **** Example: ****
 # hemisphereParameter = "lh"
 # UserProfileFile = 'Profile_males_corcoef_thickness_age.csv'
@@ -23,7 +24,7 @@
 # nreps = 10000
 # siglevel = 0.05
 # fig_cex.main = 1  
-# fig_ylim = c(0,1.6) # set a global y-axis scale
+# fig_ylim = NULL # or c(0,1.6) # set a global y-axis scale
 #
 # Notes
 # UserPhenoFile must be clneaned and formatted before loading:
