@@ -48,13 +48,13 @@
 # To source file, Open R (or R studio) and type the following command line:
 # source('CreateCorrelationCoefficients.r', echo=TRUE)
 #
-hemisphereParameter = "lh"
-UserProfileFile = 'Profile_males_corcoef_thickness_age.csv'
-wd = "/Users/jshinb/Downloads/4752955/"
-nreps = 10000
-siglevel = 0.05
-fig_cex.main = 1
-fig_ylim = c(0,1.6) # set a global y-axis scale
+# hemisphereParameter = 
+# UserProfileFile = 
+# wd = 
+# nreps = 
+# siglevel = 
+# fig_cex.main = 
+# fig_ylim = 
 #------------------------------------------------------------------------#
 
 ## Load necessary libraries 
@@ -71,6 +71,7 @@ dir.create('output')
 
 ## Load and format profile data (from the user)
 ctx.pheno.profile = read.csv(UserProfileFile,stringsAsFactors = F,row.names = 1)
+
 if(all(str_detect(rownames(ctx.pheno.profile),"ctx.lh") | str_detect(rownames(ctx.pheno.profile),"ctx.rh")) ){
   ctx.pheno.profile = ctx.pheno.profile[str_detect(rownames(ctx.pheno.profile),
                                                    paste("ctx.",hemisphereParameter,sep="")),,drop=F]
@@ -97,105 +98,127 @@ expressionForGene <- expressionForGene.df
 rm(expressionForGene.df)
 
 ## Match the column names between expression and cortical phenotype data
-if(sum(rownames(expressionForGene) == rownames(ctx.pheno.profile)) < 34){
-  o <- match(rownames(expressionForGene),rownames(ctx.pheno.profile))
-  ctx.pheno.profile <- ctx.pheno.profile[o,,drop=F] 
-  if(sum(rownames(expressionForGene) == rownames(ctx.pheno.profile))){
-    cat("The rows are matched with respect to the cortical regions.\n")
+matching.ind <- rownames(ctx.pheno.profile) %in% rownames(expressionForGene)
+err.ind <- sum(matching.ind) == 0 #rownames are wrong
+
+if(err.ind) {
+  stop("Cortical regions in \'UserProfileFile\' do not match those in expression data.\n")} else{
+    #some or all regions match between phenotype and gene-expression files
+    ctx.pheno.profile <- ctx.pheno.profile[matching.ind,,drop=F] #nrow <= 34
+    # all regions are in the phenotype
+
+    if(nrow(ctx.pheno.profile) < 34){
+      missing.ind <- !rownames(expressionForGene) %in% rownames(ctx.pheno.profile)
+      missing.regions <- rownames(expressionForGene)[missing.ind]
+      warning("Missing phenotype values exist for the following regions: ",
+              paste0(str_replace(missing.regions,paste0("ctx[.]",hemisphereParameter,"[.]"),""),collapse = ","))
+      missing.pheno.vals <- data.frame(x=rep(NA,sum(missing.ind)))
+      row.names(missing.pheno.vals) <- missing.regions
+      ## augment the original data and the missing values
+      ctx.pheno.profile <- rbind(ctx.pheno.profile,missing.pheno.vals)
+    }
+    
+    if(sum(rownames(expressionForGene) == rownames(ctx.pheno.profile)) < 34){
+      o <- match(rownames(expressionForGene),rownames(ctx.pheno.profile))
+      ctx.pheno.profile <- ctx.pheno.profile[o,,drop=F] 
+      if(sum(rownames(expressionForGene) == rownames(ctx.pheno.profile))){
+        cat("The rows are matched with respect to the cortical regions.\n")
+      }
+    }else if( sum(rownames(expressionForGene) == rownames(ctx.pheno.profile)) == 34 ){
+      cat("The rows between Allen expression and cortical phenotype profile data are already matched with respect to the cortical regions - no need to do anything.\n")
+    }
+    
+    ## Calculate correlation coefficients between gene-expression and cortical-phenotype profiles
+    cor_ReferencePanel <- NULL
+    for(i in 1:ncol(expressionForGene)){
+      cor_ReferencePanel <- c(cor_ReferencePanel,
+                              cor(expressionForGene[,i],ctx.pheno.profile$x,method="pearson",use="p"))
+    }
+    cor_ReferencePanel <- data.frame(Gene=names(expressionForGene),
+                                     expression_phenotype_r = cor_ReferencePanel,
+                                     stringsAsFactors = F)
+    cor_ReferencePanel.temp <- merge(cor_ReferencePanel,refpanel,by.x="Gene",by.y="GeneSymbol")
+    cor_ReferencePanel <- cor_ReferencePanel.temp
+    rm(cor_ReferencePanel.temp)
+    
+    ## Test association between cell-type and profile-correlation and create Figure and Table
+    ## generate the names of the empirical density plot and the re-sampling test result table files
+    if(str_sub(UserProfileFile,(str_length(UserProfileFile)-3),str_length(UserProfileFile))==".csv"){
+      CorPlotFile = str_replace(UserProfileFile,'.csv','.png')
+      CorPlotFile = paste('output/',CorPlotFile,sep="")
+    }else{
+      stop("\'UserProfileFile\' must be a csv file. Please format it as instructed.\n")
+    }
+    tab_filename = paste('output/Table_resampling_res_with_',nreps,'_replications_',
+                         UserProfileFile,sep="")
+    
+    ## plotting begins
+    png(CorPlotFile,width=10,height=8.5,pointsize=17,bg="white",units="in",res=250)
+    par(mfrow=c(3,3),mar=c( 2.6, 3.6, 2.6, 1.1),oma=c(2,0,0,0),lwd=3)
+    
+    celltypes = sort(unique(cor_ReferencePanel$CellType)[!is.na(unique(cor_ReferencePanel$CellType))])
+    r_resampling <- vector(mode = "list",length=length(celltypes))
+    r.T.celli <- r.T.celli.p <- NULL
+    for(i in 1:9){
+      celltype = celltypes[i]
+      gene_ind = !is.na(cor_ReferencePanel$CellType) & cor_ReferencePanel$CellType==celltype
+      celltype_genes = cor_ReferencePanel$Gene[gene_ind] 
+      
+      # print the range of donor to median correlation
+      range.r = round(range(geneExpressionMatrix[celltype_genes,"Average.donor.correlation.to.median"]),2)
+      cat(paste(celltype," - Average correlation between donors and median expression: (",range.r[1],",",range.r[2],")\n",
+                sep=""))
+      
+      ## perform re-sampling test (2-sided)
+      size.i=sum(gene_ind)
+      r_resampling[[i]] <- matrix(NA,nrow=size.i,ncol=nreps)
+      x=1:length(cor_ReferencePanel$Gene)
+      for(j in 1:nreps){
+        row.ind = sample(x,size = size.i,replace = F)
+        r_resampling[[i]][,j] <- cor_ReferencePanel$expression_phenotype_r[row.ind]
+      }
+      names(r_resampling)[i] <- celltype
+      
+      ## test statistics (T): mean correlation coefficient
+      avgr = mean(cor_ReferencePanel$expression_phenotype_r[cor_ReferencePanel$Gene %in% celltype_genes])
+      avgr_reps = apply(r_resampling[[i]],2,mean)
+      avgr_reps = c(avgr,avgr_reps)
+      p = sum(abs(avgr_reps) >= abs(avgr))/length(avgr_reps)
+      r.T.celli <- c(r.T.celli,avgr)
+      r.T.celli.p <- c(r.T.celli.p, p)
+      
+      ## plotting empirical density of expression-phenotype correlation coefficients for each cell type
+      ntest=1
+      unAdjCI = quantile(avgr_reps,probs = c((siglevel/2)/ntest,(1-(siglevel/2)/ntest)))
+      res_r=cor_ReferencePanel$expression_phenotype_r[gene_ind]
+      d_res=density(res_r)
+      xlim=range(density(cor_ReferencePanel$expression_phenotype_r)$x)
+      plot(d_res,main=celltype,las=1,cex.main=fig_cex.main,
+           xlab="",yaxs="i",ylab="",xlim=xlim,ylim=fig_ylim)
+      abline(v=mean(res_r),col="black",lwd=3,lty=2) ## fixed
+      myCI = unAdjCI
+      if(is.null(fig_ylim)){
+        polygon(c(myCI,rev(myCI)),c(c(0,0),c(max(d_res$y),max(d_res$y))),
+                col=scales::alpha("grey",0.5),border=NA)
+      }else{#!is.null(ylim)
+        polygon(c(myCI,rev(myCI)),c(c(0,0),c(max(fig_ylim),max(fig_ylim))),
+                col=alpha("grey",0.5),border=NA)
+      }
+      
+    }
+    title(xlab="Correlation coefficient (r)",outer=T,line=0,cex.lab=1.25)
+    title(ylab="Density",outer=T,line=-1,cex=0.9,cex.lab=1.25)
+    dev.off()
+    
+    ## Construct the result table
+    res_tab <- data.frame(Cell_Type=celltypes,
+                          nGenes = sapply(r_resampling,nrow),
+                          avgr = round(r.T.celli,3),
+                          p = r.T.celli.p,
+                          fdr.p = p.adjust(r.T.celli.p,method="fdr"), 
+                          stringsAsFactors=F)
+    print(res_tab)
+    
+    ## write out the result table to 'res_tab,tab_filename'
+    write.csv(res_tab,tab_filename,quote=F,row.names=F)
   }
-}else if( sum(rownames(expressionForGene) == rownames(ctx.pheno.profile)) == 34 ){
-  cat("The rows between Allen expression and cortical phenotype profile data are already matched with respect to the cortical regions - no need to do anything.\n")
-}
-
-## Calculate correlation coefficients between gene-expression and cortical-phenotype profiles
-cor_ReferencePanel <- NULL
-for(i in 1:ncol(expressionForGene)){
-  cor_ReferencePanel <- c(cor_ReferencePanel,cor(expressionForGene[,i],ctx.pheno.profile$x,method="pearson"))
-}
-cor_ReferencePanel <- data.frame(Gene=names(expressionForGene),
-                                 expression_phenotype_r = cor_ReferencePanel,
-                                 stringsAsFactors = F)
-cor_ReferencePanel.temp <- merge(cor_ReferencePanel,refpanel,by.x="Gene",by.y="GeneSymbol")
-cor_ReferencePanel <- cor_ReferencePanel.temp
-rm(cor_ReferencePanel.temp)
-
-## Test association between cell-type and profile-correlation and create Figure and Table
-## generate the names of the empirical density plot and the re-sampling test result table files
-if(str_sub(UserProfileFile,(str_length(UserProfileFile)-3),str_length(UserProfileFile))==".csv"){
-  CorPlotFile = str_replace(UserProfileFile,'.csv','.png')
-  CorPlotFile = paste('output/',CorPlotFile,sep="")
-}else{
-  stop("\'UserProfileFile\' must be a csv file. Please format it as instructed.\n")
-}
-tab_filename = paste('output/Table_resampling_res_with_',nreps,'_replications_',
-                     UserProfileFile,sep="")
-
-## plotting begins
-png(CorPlotFile,width=10,height=8.5,pointsize=17,bg="white",units="in",res=250)
-par(mfrow=c(3,3),mar=c( 2.6, 3.6, 2.6, 1.1),oma=c(2,0,0,0),lwd=3)
-
-celltypes = sort(unique(cor_ReferencePanel$CellType)[!is.na(unique(cor_ReferencePanel$CellType))])
-r_resampling <- vector(mode = "list",length=length(celltypes))
-r.T.celli <- r.T.celli.p <- NULL
-for(i in 1:9){
-  celltype = celltypes[i]
-  gene_ind = !is.na(cor_ReferencePanel$CellType) & cor_ReferencePanel$CellType==celltype
-  celltype_genes = cor_ReferencePanel$Gene[gene_ind] 
-  
-  # print the range of donor to median correlation
-  range.r = round(range(geneExpressionMatrix[celltype_genes,"Average.donor.correlation.to.median"]),2)
-  cat(paste(celltype," - Average correlation between donors and median expression: (",range.r[1],",",range.r[2],")\n",
-            sep=""))
-  
-  ## perform re-sampling test (2-sided)
-  size.i=sum(gene_ind)
-  r_resampling[[i]] <- matrix(NA,nrow=size.i,ncol=nreps)
-  x=1:length(cor_ReferencePanel$Gene)
-  for(j in 1:nreps){
-    row.ind = sample(x,size = size.i,replace = F)
-    r_resampling[[i]][,j] <- cor_ReferencePanel$expression_phenotype_r[row.ind]
-  }
-  names(r_resampling)[i] <- celltype
-  
-  ## test statistics (T): mean correlation coefficient
-  avgr = mean(cor_ReferencePanel$expression_phenotype_r[cor_ReferencePanel$Gene %in% celltype_genes])
-  avgr_reps = apply(r_resampling[[i]],2,mean)
-  avgr_reps = c(avgr,avgr_reps)
-  p = sum(abs(avgr_reps) >= abs(avgr))/length(avgr_reps)
-  r.T.celli <- c(r.T.celli,avgr)
-  r.T.celli.p <- c(r.T.celli.p, p)
-  
-  ## plotting empirical density of expression-phenotype correlation coefficients for each cell type
-  ntest=1
-  unAdjCI = quantile(avgr_reps,probs = c((siglevel/2)/ntest,(1-(siglevel/2)/ntest)))
-  res_r=cor_ReferencePanel$expression_phenotype_r[gene_ind]
-  d_res=density(res_r)
-  xlim=range(density(cor_ReferencePanel$expression_phenotype_r)$x)
-  plot(d_res,main=celltype,las=1,cex.main=fig_cex.main,
-       xlab="",yaxs="i",ylab="",xlim=xlim,ylim=fig_ylim)
-  abline(v=mean(res_r),col="black",lwd=3,lty=2) ## fixed
-  myCI = unAdjCI
-  if(is.null(fig_ylim)){
-    polygon(c(myCI,rev(myCI)),c(c(0,0),c(max(d_res$y),max(d_res$y))),
-            col=scales::alpha("grey",0.5),border=NA)
-  }else{#!is.null(ylim)
-    polygon(c(myCI,rev(myCI)),c(c(0,0),c(max(fig_ylim),max(fig_ylim))),
-            col=alpha("grey",0.5),border=NA)
-  }
-  
-}
-title(xlab="Correlation coefficient (r)",outer=T,line=0,cex.lab=1.25)
-title(ylab="Density",outer=T,line=-1,cex=0.9,cex.lab=1.25)
-dev.off()
-
-## Construct the result table
-res_tab <- data.frame(Cell_Type=celltypes,
-                      nGenes = sapply(r_resampling,nrow),
-                      avgr = round(r.T.celli,3),
-                      p = r.T.celli.p,
-                      fdr.p = p.adjust(r.T.celli.p,method="fdr"), 
-                      stringsAsFactors=F)
-print(res_tab)
-
-## write out the result table to 'res_tab,tab_filename'
-write.csv(res_tab,tab_filename,quote=F,row.names=F)
